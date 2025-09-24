@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Pac-Man Falling Game</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #fff;
+      overflow: hidden;
+      touch-action: none
+    }
+
+    .game-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+    }
+
+    canvas#gameCanvas {
+      background: #111;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+
+      /* Tamanho fixo no PC */
+      width: 800px;
+      height: 600px;
+
+      /* Adaptação automática em telas menores */
+      max-width: 95vw;
+      max-height: 80vh;
+    }
+
+    #hud {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      font-size: clamp(14px, 3vw, 20px)
+    }
+
+    #combo {
+      position: absolute;
+      left: 10px;
+      top: 40px;
+      font-size: clamp(12px, 2.5vw, 18px);
+      color: #f1c40f
+    }
+
+    #lives {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      font-size: clamp(16px, 4vw, 24px)
+    }
+
+    #pauseOverlay,
+    #gameOverOverlay,
+    #startOverlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: clamp(20px, 5vw, 32px);
+      background: rgba(0, 0, 0, 0.6);
+      flex-direction: column;
+      text-align: center;
+      padding: 20px;
+    }
+
+    #startOverlay {
+      pointer-events: none;
+    }
+
+    #startOverlay button,
+    #gameOverOverlay button {
+      pointer-events: auto;
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: clamp(14px, 4vw, 18px);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #f1c40f;
+      color: #000;
+    }
+
+    /* Botões para celular */
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-around;
+      pointer-events: auto;
+    }
+
+    .btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: 2px solid #f1c40f;
+      color: #f1c40f;
+      padding: 24px;
+      border-radius: 50%;
+      font-size: clamp(20px, 6vw, 36px);
+      user-select: none;
+      cursor: pointer;
+    }
+
+    /* 🔥 Somente no celular mostra os botões */
+    @media (min-width: 768px) {
+      .controls {
+        display: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="game-container">
+    <div id="hud">Pontos: <span id="score">0</span></div>
+    <div id="combo">Combo: x1</div>
+    <div id="lives">❤️❤️❤️</div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="pauseOverlay">⏸️ Jogo Pausado<br>Pressione P ou toque para continuar</div>
+    <div id="gameOverOverlay">
+      <div>💀 Game Over 💀<br>Pontos finais: <span id="finalScore">0</span></div>
+      <button onclick="restartGame()">🔄 Reiniciar</button>
+    </div>
+    <div id="startOverlay">
+      <div>🎮 Bem-vindo ao Pac-Man Falling Game!<br><br>
+        ⬅️ ➡️ Use as setas, A/D ou botões na tela.<br>
+        🍒 Colete frutas para ganhar pontos.<br>
+        👻 Desvie dos fantasmas para não perder vidas.<br>
+        ❤️ Você tem 3 vidas.<br>
+        Boa sorte!
+      </div>
+      <button onclick="startGame()">✅ Pronto</button>
+    </div>
+
+    <!-- Botões para celular -->
+    <div class="controls">
+      <div class="btn" id="leftBtn">⬅️</div>
+      <div class="btn" id="rightBtn">➡️</div>
+    </div>
+  </div>
+
+  <!-- Sons -->
+  <audio id="bgm" src="efeitosonoro.mp3.mp3" loop></audio>
+  <audio id="eatSound" src="https://actions.google.com/sounds/v1/cartoon/pop.ogg"></audio>
+  <audio id="hitSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const hudScore = document.getElementById('score');
+    const hudLives = document.getElementById('lives');
+    const hudCombo = document.getElementById('combo');
+    const pauseOverlay = document.getElementById('pauseOverlay');
+    const gameOverOverlay = document.getElementById('gameOverOverlay');
+    const finalScore = document.getElementById('finalScore');
+    const startOverlay = document.getElementById('startOverlay');
+
+    const bgm = document.getElementById('bgm');
+    const eatSound = document.getElementById('eatSound');
+    const hitSound = document.getElementById('hitSound');
+
+    let gameState = 'start';
+    let score = 0;
+    let lives = 3;
+    let combo = 1;
+    let comboTimer = 0;
+    const COMBO_TIMEOUT = 2500;
+
+    const player = { x: 0, y: 0, size: 40, speed: 10, dir: 0 };
+
+    let objects = [];
+    let spawnTimer = 0;
+    let spawnInterval = 1500;
+    let lastTime = performance.now();
+
+    function updateLivesHUD() { hudLives.textContent = '❤️'.repeat(Math.max(0, lives)); }
+    function updateComboHUD() { hudCombo.textContent = 'Combo: x' + combo; }
+
+    function spawnObject() {
+      const isFruit = Math.random() < 0.7;
+      const symbol = isFruit ? '🍒' : '👻';
+      const points = isFruit ? 1 : -1;
+      const x = Math.random() * (canvas.width - 40) + 20;
+      const y = -20;
+      const speed = 60 + Math.random() * 80;
+      objects.push({ x, y, speed, symbol, points });
+    }
+
+    function update(dt) {
+      if (gameState !== 'playing') return;
+
+      player.x += player.dir * player.speed * (dt / 16.67);
+      if (player.x < 0) player.x = 0;
+      if (player.x + player.size > canvas.width) player.x = canvas.width - player.size;
+
+      spawnTimer += dt;
+      if (spawnTimer >= spawnInterval) {
+        spawnTimer = 0;
+        spawnObject();
+        spawnInterval = Math.max(700, spawnInterval - 5);
+      }
+
+      comboTimer += dt;
+      if (comboTimer > COMBO_TIMEOUT) {
+        combo = 1;
+        updateComboHUD();
+      }
+
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const o = objects[i];
+        o.y += o.speed * (dt / 1000);
+
+        const caught = (
+          o.y >= player.y &&
+          o.y <= player.y + player.size &&
+          o.x >= player.x &&
+          o.x <= player.x + player.size
+        );
+
+        if (caught) {
+          if (o.points > 0) {
+            score += o.points * combo;
+            combo++;
+            comboTimer = 0;
+            eatSound.currentTime = 0;
+            eatSound.play();
+          } else {
+            lives--;
+            combo = 1;
+            hitSound.currentTime = 0;
+            hitSound.play();
+          }
+          objects.splice(i, 1);
+          hudScore.textContent = score;
+          updateLivesHUD();
+          updateComboHUD();
+          if (lives <= 0) endGame();
+          continue;
+        }
+
+        if (o.y > canvas.height) {
+          objects.splice(i, 1);
+        }
+      }
+    }
+
+    function drawPacman() {
+      ctx.beginPath();
+      ctx.fillStyle = 'yellow';
+      ctx.moveTo(player.x + player.size / 2, player.y + player.size / 2);
+      ctx.arc(player.x + player.size / 2, player.y + player.size / 2, player.size / 2, 1.75 * Math.PI, 1.25 * Math.PI);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (gameState === 'playing') {
+        drawPacman();
+        ctx.font = '28px sans-serif';
+        ctx.textAlign = 'center';
+        for (const o of objects) {
+          ctx.fillText(o.symbol, o.x, o.y);
+        }
+      }
+
+      pauseOverlay.style.display = (gameState === 'paused') ? 'flex' : 'none';
+      gameOverOverlay.style.display = (gameState === 'gameover') ? 'flex' : 'none';
+      if (gameState === 'gameover') finalScore.textContent = score;
+      if (gameState === 'start') startOverlay.style.display = 'flex';
+    }
+
+    function loop(now) {
+      const dt = now - lastTime;
+      lastTime = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function endGame() { gameState = 'gameover'; bgm.pause(); }
+
+    function initGame() {
+      score = 0;
+      lives = 3;
+      combo = 1;
+      objects = [];
+      spawnTimer = 0;
+      spawnInterval = 1500;
+      hudScore.textContent = score;
+      updateLivesHUD();
+      updateComboHUD();
+      player.x = canvas.width / 2 - player.size / 2;
+      player.y = canvas.height - 60;
+    }
+
+    function restartGame() { initGame(); gameState = 'playing'; bgm.currentTime = 0; bgm.play().catch(() => { }); }
+    function startGame() { initGame(); gameState = 'playing'; bgm.currentTime = 0; bgm.play().catch(() => { }); startOverlay.style.display = 'none'; }
+
+    function togglePause() { if (gameState === 'playing') { gameState = 'paused'; bgm.pause(); } else if (gameState === 'paused') { gameState = 'playing'; bgm.play().catch(() => { }); } }
+
+    // Controles teclado
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft' || e.key === 'a') player.dir = -1;
+      if (e.key === 'ArrowRight' || e.key === 'd') player.dir = 1;
+      if (e.key.toLowerCase() === 'p') togglePause();
+    });
+    window.addEventListener('keyup', e => {
+      if ((e.key === 'ArrowLeft' || e.key === 'a') && player.dir === -1) player.dir = 0;
+      if ((e.key === 'ArrowRight' || e.key === 'd') && player.dir === 1) player.dir = 0;
+    });
+
+    // Controles mobile (toque)
+    document.getElementById('leftBtn').addEventListener('touchstart', () => { player.dir = -1; });
+    document.getElementById('rightBtn').addEventListener('touchstart', () => { player.dir = 1; });
+    document.getElementById('leftBtn').addEventListener('touchend', () => { if (player.dir === -1) player.dir = 0; });
+    document.getElementById('rightBtn').addEventListener('touchend', () => { if (player.dir === 1) player.dir = 0; });
+
+    function resizeCanvas() {
+      // Ajusta para o tamanho exibido na tela
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      player.x = Math.max(0, Math.min(player.x, canvas.width - player.size));
+      player.y = canvas.height - 60;
+    }
+    window.addEventListener('resize', resizeCanvas); resizeCanvas();
+
+    // Auto-start em celulares
+    window.addEventListener("load", () => {
+      if (/Mobi|Android/i.test(navigator.userAgent)) {
+        initGame();
+        gameState = 'playing';
+        bgm.currentTime = 0;
+        bgm.play().catch(() => { });
+        startOverlay.style.display = 'flex';
+        setTimeout(() => { startOverlay.style.display = 'none'; }, 3000);
+      }
+    });
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+
+</html>
